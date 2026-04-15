@@ -571,17 +571,37 @@ function importStok(input){
       }
       // Depolarları stoktan güncelle
       depoDepolarGuncelle();
-      // Firebase
+      // Lokale kaydet
+      try{localStorage.setItem('bs_stok',JSON.stringify(stokData));localStorage.setItem('bs_dep',JSON.stringify(depolar));}catch(e){}
+      renderStok();renderDepoList();
+      // Firebase — stoku 400'lük parçalara böl (1MB limiti)
       if(fbDb){
-        fbDb.collection('veriler').doc('stok').set({liste:stokData,ts:Date.now()})
-          .then(()=>showToast(`${stokData.length} stok kaydı yüklendi ve senkronize edildi ✓`))
-          .catch(err=>showToast('Firebase: '+err.message,true));
+        const PARCA=400;
+        const toplamParca=Math.ceil(stokData.length/PARCA);
+        // Önce meta bilgisini yaz
+        fbDb.collection('veriler').doc('stok_meta').set({
+          toplamKayit:stokData.length,
+          toplamParca,
+          ts:Date.now()
+        });
+        // Depoları yaz
         fbDb.collection('veriler').doc('depolar').set({liste:depolar,ts:Date.now()});
+        // Her parçayı ayrı dokümana yaz
+        let yazilan=0;
+        for(let p=0;p<toplamParca;p++){
+          const parca=stokData.slice(p*PARCA,(p+1)*PARCA);
+          fbDb.collection('veriler').doc('stok_'+p).set({liste:parca,parca:p})
+            .then(()=>{
+              yazilan++;
+              if(yazilan===toplamParca){
+                showToast(`${stokData.length} stok kaydı senkronize edildi ✓`);
+              }
+            })
+            .catch(err=>showToast('Firebase yazma hatası: '+err.message,true));
+        }
       }else{
         showToast(`${stokData.length} stok kaydı yüklendi ✓`);
       }
-      try{localStorage.setItem('bs_stok',JSON.stringify(stokData));localStorage.setItem('bs_dep',JSON.stringify(depolar));}catch(e){}
-      renderStok();renderDepoList();
     }catch(err){showToast('Excel okunamadı: '+err.message,true);}
   };
   reader.readAsBinaryString(file);
@@ -1196,8 +1216,24 @@ function fbInit(apiKey,projectId,appId){
 
 function fbDinle(){
   if(!fbDb)return;
-  fbDb.collection('veriler').doc('stok').onSnapshot(snap=>{
-    if(snap.exists){stokData=snap.data().liste||[];try{localStorage.setItem('bs_stok',JSON.stringify(stokData));}catch(e){}renderStok();}
+  // Stok — parçalı okuma
+  fbDb.collection('veriler').doc('stok_meta').onSnapshot(meta=>{
+    if(!meta.exists)return;
+    const toplamParca=meta.data().toplamParca||0;
+    const toplamKayit=meta.data().toplamKayit||0;
+    if(toplamParca===0)return;
+    // Tüm parçaları oku
+    const promises=[];
+    for(let p=0;p<toplamParca;p++){
+      promises.push(fbDb.collection('veriler').doc('stok_'+p).get());
+    }
+    Promise.all(promises).then(docs=>{
+      stokData=[];
+      docs.forEach(d=>{if(d.exists)stokData=stokData.concat(d.data().liste||[]);});
+      try{localStorage.setItem('bs_stok',JSON.stringify(stokData));}catch(e){}
+      depoDepolarGuncelle();
+      renderStok();renderDepoList();
+    });
   });
   fbDb.collection('veriler').doc('depolar').onSnapshot(snap=>{
     if(snap.exists){depolar=snap.data().liste||[];try{localStorage.setItem('bs_dep',JSON.stringify(depolar));}catch(e){}renderDepoList();}
