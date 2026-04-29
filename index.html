@@ -258,13 +258,23 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
       </div>
       <div style="overflow-x:auto;">
         <table class="stok-table">
-          <thead><tr><th>Barkod</th><th>Model</th><th>Renk</th><th>Beden</th><th>Depo</th><th>Alttip</th></tr></thead>
+          <thead><tr><th>Barkod</th><th>Model</th><th>Renk Seç</th><th>Beden</th><th>Depo</th><th>Alttip</th></tr></thead>
           <tbody id="sorguTbody"></tbody>
         </table>
       </div>
     </div>
   </div>
   <div id="sorguBos" style="display:none;color:var(--muted);font-size:12px;text-align:center;padding:28px;">Stok kaydı bulunamadı</div>
+
+  <!-- Renk Seçim Modalı -->
+  <div id="renkModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:300;align-items:flex-end;">
+    <div style="background:var(--surface);border-radius:18px 18px 0 0;padding:16px 14px 28px;width:100%;max-width:480px;margin:0 auto;border-top:1px solid var(--border);">
+      <div style="font-size:14px;font-weight:700;margin-bottom:6px;">🎨 Renk Seç</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;" id="renkModalBarkod"></div>
+      <div id="renkSecenekler" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+      <button class="btn btn-secondary btn-full" style="margin-top:14px;" onclick="renkModalKapat()">Kapat</button>
+    </div>
+  </div>
 </div>
 
 <!-- ===== SAYIM ===== -->
@@ -391,8 +401,17 @@ body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:1
       <input class="scan-input" id="barkodInput" placeholder="⌨️ Barkod girin..." type="text" inputmode="text" autocomplete="off" onkeydown="if(event.key==='Enter')barkodEkle()">
       <button class="btn btn-primary" onclick="barkodEkle()">Ekle</button>
     </div>
-    <div id="ciftUyari" style="display:none;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:7px;padding:8px 10px;margin-bottom:8px;font-size:12px;color:var(--warn);font-weight:600;"></div>
-    <div id="modalBarkodList" style="max-height:180px;overflow-y:auto;margin-bottom:8px;border:1px solid var(--border);border-radius:8px;padding:0 4px;"></div>
+    <div id="ciftUyari" style="display:none;background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.4);border-radius:7px;padding:8px 10px;margin-bottom:8px;font-size:12px;font-weight:600;"></div>
+    <!-- OKUNAN BARKODLAR -->
+    <div id="modalBarkodList" style="max-height:150px;overflow-y:auto;margin-bottom:8px;border:1px solid var(--border);border-radius:8px;padding:0 4px;"></div>
+    <!-- DEPO STOK LİSTESİ -->
+    <div id="depoStokKart" style="display:none;margin-bottom:8px;">
+      <div style="font-size:10px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.7px;margin-bottom:5px;display:flex;align-items:center;justify-content:space-between;">
+        <span>📋 Depodaki Stok Listesi</span>
+        <span id="depoStokOzet" style="font-family:var(--mono);color:var(--accent);"></span>
+      </div>
+      <div id="depoStokListe" style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;"></div>
+    </div>
     <div style="display:flex;gap:6px;">
       <button class="btn btn-secondary btn-sm" style="flex:1" onclick="closeBarkodModal()">Kapat</button>
       <button class="btn btn-warn btn-sm" style="flex:1" onclick="sayimPaylasModal()">📤 Paylaş</button>
@@ -530,12 +549,26 @@ function goPage(p){
   document.getElementById('page-home').style.display='none';
   document.querySelectorAll('.inner-page').forEach(x=>x.classList.remove('active'));
   document.getElementById('page-'+p).classList.add('active');
+  // Browser history için push
+  history.pushState({page:p},'',window.location.pathname+'#'+p);
 }
 function goHome(){
   document.querySelectorAll('.inner-page').forEach(x=>x.classList.remove('active'));
   document.getElementById('page-home').style.display='';
-  stopKamera(); stopTransferKamera(); stopSorguKamera();
+  stopKamera();stopTransferKamera();stopSorguKamera();
+  history.pushState({page:'home'},'',window.location.pathname);
 }
+// Tarayıcı geri tuşu → uygulama ana ekranına dön
+window.addEventListener('popstate',e=>{
+  // Tüm modal'ları kapat
+  document.querySelectorAll('.modal-overlay.open').forEach(m=>m.classList.remove('open'));
+  // Sayfa içinde kalıyoruz
+  document.querySelectorAll('.inner-page').forEach(x=>x.classList.remove('active'));
+  document.getElementById('page-home').style.display='';
+  stopKamera();stopTransferKamera();stopSorguKamera();
+  // Geri gidilmesini engelle (history'de home'u tut)
+  history.pushState({page:'home'},'',window.location.pathname);
+});
 
 // ===== STOK IMPORT =====
 function importStok(input){
@@ -690,6 +723,10 @@ function deleteDepo(i){
 }
 
 // ===== SORGU =====
+let sorguSonuclar = [];
+let aktifRenkFiltre = null; // null = hepsi, string = seçili renk
+let sorguAktifBno = '';
+
 function sorguYap(){
   const bNo=document.getElementById('sorguInput').value.trim();
   if(!bNo){showToast('Barkod girin',true);return;}
@@ -700,51 +737,112 @@ function sorguYap(){
     document.getElementById('sorguBos').style.display='block';
     return;
   }
-  const sonuclar=stokData.filter(s=>
-    s.model.toString().trim()===hedef.model.toString().trim()
-  );
+  sorguSonuclar=stokData.filter(s=>s.model.toString().trim()===hedef.model.toString().trim());
+  aktifRenkFiltre=null;
+  sorguAktifBno=bNo;
   document.getElementById('sorguBos').style.display='none';
   document.getElementById('sorguSonuc').style.display='block';
-  document.getElementById('sorguBaslik').textContent=`${hedef.model} · ${sonuclar.length} kayıt`;
-  document.getElementById('sorguTbody').innerHTML=sonuclar.map(s=>`
-    <tr style="${s.barkodNo.toString().trim()===bNo?'background:rgba(74,222,128,.07);':''}">
+  document.getElementById('sorguBaslik').textContent=`${hedef.model} · ${sorguSonuclar.length} kayıt`;
+  renderSorguTablo();
+}
+
+function renderSorguTablo(){
+  const renkler=[...new Set(sorguSonuclar.map(s=>s.renk).filter(Boolean))];
+  // Filtrele
+  const goster=aktifRenkFiltre?sorguSonuclar.filter(s=>s.renk===aktifRenkFiltre):sorguSonuclar;
+  document.getElementById('sorguTbody').innerHTML=goster.map((s,idx)=>{
+    const isAktif=s.barkodNo.toString().trim()===sorguAktifBno;
+    return `<tr style="${isAktif?'background:rgba(74,222,128,.07);':''}">
       <td class="td-barkod">${s.barkodNo}</td>
       <td>${s.model||'—'}</td>
-      <td>${s.renk||'—'}</td>
+      <td>
+        <button onclick="renkModalAc('${renkler.join('|').replace(/'/g,"\\'")}')"
+          style="background:${aktifRenkFiltre===s.renk?'rgba(34,211,238,.25)':'rgba(34,211,238,.1)'};border:1px solid rgba(34,211,238,.3);color:var(--accent2);border-radius:6px;padding:4px 8px;font-size:11px;cursor:pointer;font-family:var(--sans);font-weight:600;white-space:nowrap;">
+          ${s.renk||'—'} ▾
+        </button>
+      </td>
       <td>${s.beden||'—'}</td>
       <td class="td-depo">${s.depoAdi||'—'}</td>
       <td>${s.alttip||'—'}</td>
-    </tr>`).join('');
+    </tr>`;
+  }).join('');
+  // Başlık güncelle
+  document.getElementById('sorguBaslik').textContent=
+    `${goster[0]?.model||''} · ${goster.length} kayıt${aktifRenkFiltre?' · '+aktifRenkFiltre:''}`;
 }
+
+function renkModalAc(renklerStr){
+  const renkler=renklerStr.split('|').filter(Boolean);
+  document.getElementById('renkModalBarkod').textContent='Renk seçin';
+  const secenekler=document.getElementById('renkSecenekler');
+  // "Hepsi" butonu + renkler
+  secenekler.innerHTML=`
+    <button onclick="renkSec(null,this)"
+      style="background:${aktifRenkFiltre===null?'rgba(74,222,128,.2)':'var(--surface2)'};border:1px solid ${aktifRenkFiltre===null?'var(--accent)':'var(--border)'};color:${aktifRenkFiltre===null?'var(--accent)':'var(--text)'};border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans);">
+      Hepsi
+    </button>`+
+    renkler.map(r=>`
+    <button onclick="renkSec('${r.replace(/'/g,"\\'")}',this)"
+      style="background:${aktifRenkFiltre===r?'rgba(34,211,238,.2)':'var(--surface2)'};border:1px solid ${aktifRenkFiltre===r?'var(--accent2)':'var(--border)'};color:${aktifRenkFiltre===r?'var(--accent2)':'var(--text)'};border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;font-family:var(--sans);">
+      ${r}
+    </button>`).join('');
+  document.getElementById('renkModalOverlay').style.display='flex';
+}
+
+function renkSec(renk, btn){
+  aktifRenkFiltre=renk;
+  setTimeout(()=>{renkModalKapat();renderSorguTablo();},300);
+}
+
+function renkModalKapat(){
+  document.getElementById('renkModalOverlay').style.display='none';
+}
+document.getElementById('renkModalOverlay').addEventListener('click',e=>{if(e.target===document.getElementById('renkModalOverlay'))renkModalKapat();});
 
 // Sorgu kamera
 let sorguDebounce=false;
+let sorguNativeStream=null, sorguNativeScanInterval=null;
 function toggleSorguKamera(){sorguKameraAcik?stopSorguKamera():startSorguKamera();}
 function startSorguKamera(){
   const btn=document.getElementById('sorguKameraBtn');
   const cont=document.getElementById('qr-sorgu-container');
   cont.innerHTML='';
-  const rd=document.createElement('div');rd.id='sq-'+Date.now();rd.style.cssText='position:relative;border-radius:8px;overflow:hidden;';
-  cont.appendChild(rd);
-  btn.textContent='⏹ Kapat';btn.style.cssText='background:rgba(248,113,113,.15);border:1px solid var(--danger);color:var(--danger);width:100%;padding:5px;font-size:11px;border-radius:6px;font-weight:600;cursor:pointer;font-family:var(--sans);margin-bottom:7px;';
+  btn.textContent='⏹ Kapat';
+  btn.style.cssText='background:rgba(248,113,113,.15);border:1px solid var(--danger);color:var(--danger);width:100%;padding:5px;font-size:11px;border-radius:6px;font-weight:600;cursor:pointer;font-family:var(--sans);margin-bottom:7px;';
   sorguKameraAcik=true;sorguDebounce=false;
-  sorguQr=new Html5Qrcode(rd.id);
-  Html5Qrcode.getCameras().then(cams=>{
-    if(!cams||!cams.length){showToast('Kamera bulunamadı',true);stopSorguKamera();return;}
-    const cam=cams.find(c=>/back|rear|environment/i.test(c.label))||cams[cams.length-1];
-    const w=Math.min(cont.offsetWidth-20,260);
-    sorguQr.start(cam.id,{fps:10,qrbox:{width:w,height:Math.round(w*.55)},aspectRatio:1.5},
-      decoded=>{
-        if(sorguDebounce)return;sorguDebounce=true;
-        if(navigator.vibrate)navigator.vibrate([60,30,60]);
-        document.getElementById('sorguInput').value=decoded;
-        sorguYap();stopSorguKamera();
-        setTimeout(()=>sorguDebounce=false,1500);
-      },()=>{}
-    ).catch(err=>{showToast(err.toString().includes('ermission')?'Kamera izni gerekli':'Kamera açılamadı',true);stopSorguKamera();});
-  }).catch(()=>{showToast('Kamera erişilemedi',true);stopSorguKamera();});
+
+  if(isIOS() || typeof BarcodeDetector !== 'undefined'){
+    startNativeKamera(cont, decoded=>{
+      if(sorguDebounce)return;sorguDebounce=true;
+      if(navigator.vibrate)navigator.vibrate([60,30,60]);
+      document.getElementById('sorguInput').value=decoded;
+      sorguYap();stopSorguKamera();
+      setTimeout(()=>sorguDebounce=false,1500);
+    });
+    setTimeout(()=>{sorguNativeStream=nativeStream;sorguNativeScanInterval=nativeScanInterval;},500);
+  } else {
+    const rd=document.createElement('div');rd.id='sq-'+Date.now();rd.style.cssText='position:relative;border-radius:8px;overflow:hidden;';
+    cont.appendChild(rd);
+    sorguQr=new Html5Qrcode(rd.id);
+    Html5Qrcode.getCameras().then(cams=>{
+      if(!cams||!cams.length){showToast('Kamera bulunamadı',true);stopSorguKamera();return;}
+      const cam=cams.find(c=>/back|rear|environment/i.test(c.label))||cams[cams.length-1];
+      const w=Math.min(cont.offsetWidth-20,260);
+      sorguQr.start(cam.id,{fps:15,qrbox:{width:w,height:Math.round(w*.55)},aspectRatio:1.5},
+        decoded=>{
+          if(sorguDebounce)return;sorguDebounce=true;
+          if(navigator.vibrate)navigator.vibrate([60,30,60]);
+          document.getElementById('sorguInput').value=decoded;
+          sorguYap();stopSorguKamera();
+          setTimeout(()=>sorguDebounce=false,1500);
+        },()=>{}
+      ).catch(err=>{showToast(err.toString().includes('ermission')?'Kamera izni gerekli':'Kamera açılamadı',true);stopSorguKamera();});
+    }).catch(()=>{showToast('Kamera erişilemedi',true);stopSorguKamera();});
+  }
 }
 function stopSorguKamera(){
+  if(sorguNativeScanInterval){clearInterval(sorguNativeScanInterval);sorguNativeScanInterval=null;}
+  if(sorguNativeStream){sorguNativeStream.getTracks().forEach(t=>t.stop());sorguNativeStream=null;}
   if(sorguQr&&sorguKameraAcik)sorguQr.stop().catch(()=>{}).finally(()=>sorguQr=null);
   else sorguQr=null;
   sorguKameraAcik=false;
@@ -797,13 +895,51 @@ function deleteSayim(id){
   showToast('Sayım silindi');
 }
 
+let sayimFiltre={}; // {sayimId: 'tumu'|'sayildi'|'eksik'|'depodayok'}
+
+function sayimFiltreToggle(sid, tip){
+  if(sayimFiltre[sid]===tip) delete sayimFiltre[sid];
+  else sayimFiltre[sid]=tip;
+  renderSayimList();
+}
+
 function renderSayimList(){
   const el=document.getElementById('sayimList');
   if(!sayimlar.length){el.innerHTML='<div style="color:var(--muted);font-size:12px;text-align:center;padding:32px 0;">Henüz sayım başlatılmadı</div>';return;}
-  el.innerHTML=sayimlar.map(s=>`
+  el.innerHTML=sayimlar.map(s=>{
+    const depoBarkodlar=stokData.filter(b=>b.depoAdi.toString().trim()===(s.depo||'').toString().trim());
+    const sayilanIdler=s.barkodlar.map(b=>b.barkodNo.toString().trim());
+    const sayilanDepodaki=s.barkodlar.filter(b=>b.depodaVar!==false);
+    const sayilanDepodaYok=s.barkodlar.filter(b=>b.depodaVar===false);
+    const eksikBarkodlar=depoBarkodlar.filter(b=>!sayilanIdler.includes(b.barkodNo.toString().trim()));
+    const filtre=sayimFiltre[s.id];
+
+    // Gösterilecek liste
+    let gosterilecek=[];
+    let gosterTip='okunan'; // 'okunan' | 'eksik'
+    if(!filtre||filtre==='sayildi'){
+      gosterilecek=sayilanDepodaki;gosterTip='okunan';
+    }else if(filtre==='depodayok'){
+      gosterilecek=sayilanDepodaYok;gosterTip='okunan';
+    }else if(filtre==='eksik'){
+      gosterilecek=eksikBarkodlar;gosterTip='eksik';
+    }
+
+    const maxGoster=4;
+    const gosterSlice=gosterilecek.slice(0,maxGoster);
+    const fazla=gosterilecek.length-maxGoster;
+
+    const aktifSayildi=(!filtre||filtre==='sayildi');
+    const aktifEksik=filtre==='eksik';
+    const aktifDepodaYok=filtre==='depodayok';
+
+    return `
     <div class="sayim-item">
       <div class="sayim-header">
-        <div><div class="sayim-title">${s.ad}</div><div class="sayim-meta">📦 ${s.depo||'—'} · ${s.tarih} · ${s.barkodlar.length} adet</div></div>
+        <div>
+          <div class="sayim-title">${s.ad}</div>
+          <div class="sayim-meta">📦 ${s.depo||'—'} · ${s.tarih} · ${s.barkodlar.length} adet</div>
+        </div>
         <div class="sayim-actions">
           <button class="btn btn-secondary btn-sm" onclick="openBarkodModal('${s.id}')">➕ Oku</button>
           <button class="btn btn-warn btn-sm" onclick="openDuzenle('${s.id}','sayim')">✏️</button>
@@ -811,16 +947,29 @@ function renderSayimList(){
         </div>
       </div>
       <div class="sayim-body">
+        ${depoBarkodlar.length>0?`
+        <div style="display:flex;gap:7px;margin-bottom:8px;flex-wrap:wrap;">
+          <button onclick="sayimFiltreToggle('${s.id}','sayildi')" style="font-size:11px;background:${aktifSayildi?'rgba(74,222,128,.25)':'rgba(74,222,128,.1)'};color:var(--accent);padding:4px 10px;border-radius:20px;font-weight:600;border:1px solid ${aktifSayildi?'var(--accent)':'rgba(74,222,128,.3)'};cursor:pointer;font-family:var(--sans);">✅ ${sayilanDepodaki.length} sayıldı</button>
+          ${eksikBarkodlar.length>0?`<button onclick="sayimFiltreToggle('${s.id}','eksik')" style="font-size:11px;background:${aktifEksik?'rgba(245,158,11,.25)':'rgba(245,158,11,.1)'};color:var(--warn);padding:4px 10px;border-radius:20px;font-weight:600;border:1px solid ${aktifEksik?'var(--warn)':'rgba(245,158,11,.3)'};cursor:pointer;font-family:var(--sans);">⏳ ${eksikBarkodlar.length} eksik</button>`:''}
+          ${sayilanDepodaYok.length>0?`<button onclick="sayimFiltreToggle('${s.id}','depodayok')" style="font-size:11px;background:${aktifDepodaYok?'rgba(248,113,113,.25)':'rgba(248,113,113,.1)'};color:var(--danger);padding:4px 10px;border-radius:20px;font-weight:600;border:1px solid ${aktifDepodaYok?'var(--danger)':'rgba(248,113,113,.3)'};cursor:pointer;font-family:var(--sans);">🚫 ${sayilanDepodaYok.length} depoda yok</button>`:''}
+        </div>`:''}
         ${!s.barkodlar.length?'<div style="color:var(--muted);font-size:12px;text-align:center;padding:10px 0;">Henüz barkod okunmadı</div>':
-          s.barkodlar.slice(-4).reverse().map((b,ri)=>{
-            const i=s.barkodlar.length-1-ri;
-            return `<div class="barkod-row"><div><div class="barkod-no">${b.barkodNo}</div><div class="barkod-depo">📦 ${b.depo||s.depo||'—'}</div></div><button class="barkod-del" onclick="deleteSayimBarkod('${s.id}',${i})">🗑</button></div>`;
-          }).join('')
+          gosterTip==='okunan'?
+            gosterSlice.map((b,ri)=>{
+              const idx=s.barkodlar.indexOf(b);
+              const renk=b.depodaVar===false?'var(--danger)':'var(--accent2)';
+              return `<div class="barkod-row"><div><div class="barkod-no" style="color:${renk};">${b.barkodNo}</div><div class="barkod-depo">📦 ${b.depo||s.depo||'—'} ${b.depodaVar===false?'<span style="color:var(--danger);">🚫</span>':'<span style="color:var(--accent);">✓</span>'}</div></div><button class="barkod-del" onclick="deleteSayimBarkod('${s.id}',${idx})">🗑</button></div>`;
+            }).join('')
+          :
+            gosterSlice.map(b=>`
+              <div class="barkod-row"><div><div class="barkod-no" style="color:var(--warn);">${b.barkodNo}</div><div class="barkod-depo">⏳ ${b.model||''} ${b.renk||''} ${b.beden||''}</div></div></div>
+            `).join('')
         }
-        ${s.barkodlar.length>4?`<div style="font-size:10px;color:var(--muted);text-align:center;padding-top:5px;">+${s.barkodlar.length-4} daha</div>`:''}
+        ${fazla>0?`<div style="font-size:10px;color:var(--muted);text-align:center;padding-top:5px;">+${fazla} daha</div>`:''}
         ${s.barkodlar.length>0?`<button class="btn btn-green btn-full btn-sm" style="margin-top:8px;" onclick="openPaylas('${s.id}','sayim')">📤 Paylaş / Aktar</button>`:''}
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function deleteSayimBarkod(sid,idx){
@@ -831,6 +980,9 @@ function deleteSayimBarkod(sid,idx){
   if(fbDb)fbDb.collection('sayimlar').doc(sid).set(s);
 }
 
+// ===== BARKOD GEÇERLİ HARFLER =====
+const GECERLI_BASLAR = ['D','K','X','V','Q','T'];
+
 // Barkod modal (sayım)
 function openBarkodModal(sid){
   aktifSayimId=sid;
@@ -839,6 +991,7 @@ function openBarkodModal(sid){
   document.getElementById('barkodInput').value='';
   document.getElementById('ciftUyari').style.display='none';
   renderModalBarkodList();
+  renderDepoStokListe(s.depo);
   openModal('modalBarkod');
   setTimeout(()=>document.getElementById('barkodInput').focus(),300);
 }
@@ -848,23 +1001,70 @@ function closeBarkodModal(){
   renderSayimList();setTimeout(()=>stopKamera(),100);
 }
 
+function renderDepoStokListe(depoAdi){
+  const kart=document.getElementById('depoStokKart');
+  const liste=document.getElementById('depoStokListe');
+  const ozet=document.getElementById('depoStokOzet');
+  const s=sayimlar.find(x=>x.id===aktifSayimId);
+  if(!stokData.length||!depoAdi){kart.style.display='none';return;}
+  const depoBarkodlar=stokData.filter(b=>b.depoAdi.toString().trim()===depoAdi.toString().trim());
+  if(!depoBarkodlar.length){kart.style.display='none';return;}
+  kart.style.display='block';
+  const sayilanlar=s?s.barkodlar.map(b=>b.barkodNo.toString().trim()):[];
+  const sayilan=depoBarkodlar.filter(b=>sayilanlar.includes(b.barkodNo.toString().trim())).length;
+  ozet.textContent=`${sayilan}/${depoBarkodlar.length} sayıldı`;
+  liste.innerHTML=depoBarkodlar.map(b=>{
+    const bSayildi=sayilanlar.includes(b.barkodNo.toString().trim());
+    return `<div style="display:flex;align-items:center;gap:8px;padding:6px 10px;border-bottom:1px solid var(--border);background:${bSayildi?'rgba(74,222,128,.07)':''};">
+      <div style="width:8px;height:8px;border-radius:50%;background:${bSayildi?'var(--accent)':'var(--border)'};flex-shrink:0;"></div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-family:var(--mono);font-size:11px;color:${bSayildi?'var(--accent)':'var(--accent2)'};">${b.barkodNo}</div>
+        <div style="font-size:10px;color:var(--muted);">${b.model||''} ${b.renk||''} ${b.beden||''}</div>
+      </div>
+      ${bSayildi?'<span style="font-size:10px;color:var(--accent);font-weight:700;">✓</span>':''}
+    </div>`;
+  }).join('');
+}
+
 function barkodEkle(){
   const inp=document.getElementById('barkodInput');
   const bNo=inp.value.trim();if(!bNo)return;
   const s=sayimlar.find(x=>x.id===aktifSayimId);if(!s)return;
+  const u=document.getElementById('ciftUyari');
+  const goster=(mesaj,renk,bg,border)=>{
+    u.style.display='block';u.textContent=mesaj;
+    u.style.color=renk;u.style.background=bg;u.style.borderColor=border;
+  };
+  // Çift okuma
   if(s.barkodlar.some(b=>b.barkodNo.toString().trim()===bNo.toString().trim())){
-    const u=document.getElementById('ciftUyari');
-    u.style.display='block';u.textContent=`⚠️ "${bNo}" BU SAYIMDA ZATEN VAR — Eklenmedi!`;
-    inp.value='';inp.focus();
-    if(navigator.vibrate)navigator.vibrate([200,100,200]);
+    goster(`⚠️ "${bNo}" BU SAYIMDA ZATEN VAR — Eklenmedi!`,'var(--warn)','rgba(245,158,11,.12)','rgba(245,158,11,.4)');
+    inp.value='';inp.focus();if(navigator.vibrate)navigator.vibrate([200,100,200]);
     setTimeout(()=>u.style.display='none',3500);return;
   }
-  document.getElementById('ciftUyari').style.display='none';
-  s.barkodlar.push({barkodNo:bNo,depo:s.depo});
+  // Harf kontrolü
+  if(!GECERLI_BASLAR.includes(bNo.charAt(0).toUpperCase())){
+    goster(`❌ YANLIŞ BARKOD — "${bNo}" geçersiz`,'var(--danger)','rgba(248,113,113,.1)','rgba(248,113,113,.4)');
+    inp.value='';inp.focus();if(navigator.vibrate)navigator.vibrate([300,100,300]);
+    setTimeout(()=>u.style.display='none',4000);return;
+  }
+  // Depoda var mı
+  let depodaVar=true;
+  if(stokData.length>0){
+    depodaVar=stokData.some(b=>
+      b.barkodNo.toString().trim()===bNo.toString().trim()&&
+      b.depoAdi.toString().trim()===s.depo.toString().trim()
+    );
+    if(!depodaVar){
+      goster(`🚫 BARKOD DEPODA YOK — "${bNo}" ${s.depo} deposunda bulunamadı`,'var(--danger)','rgba(248,113,113,.1)','rgba(248,113,113,.4)');
+      if(navigator.vibrate)navigator.vibrate([200,100,200,100,200]);
+      setTimeout(()=>u.style.display='none',5000);
+    }
+  }
+  s.barkodlar.push({barkodNo:bNo,depo:s.depo,depodaVar});
   inp.value='';inp.focus();
-  saveLocalSayim();renderModalBarkodList();
+  saveLocalSayim();renderModalBarkodList();renderDepoStokListe(s.depo);
   if(fbDb)fbDb.collection('sayimlar').doc(s.id).set(s);
-  if(navigator.vibrate)navigator.vibrate(50);
+  if(navigator.vibrate&&depodaVar)navigator.vibrate(50);
 }
 
 function renderModalBarkodList(){
@@ -873,7 +1073,15 @@ function renderModalBarkodList(){
   if(!s.barkodlar.length){el.innerHTML='<div style="color:var(--muted);font-size:11px;text-align:center;padding:10px;">Henüz okuma yapılmadı</div>';return;}
   el.innerHTML=s.barkodlar.slice().reverse().map((b,ri)=>{
     const i=s.barkodlar.length-1-ri;
-    return `<div class="barkod-row" style="padding:7px 4px;"><div style="flex:1;min-width:0;"><div class="barkod-no">${b.barkodNo}</div><div class="barkod-depo">📦 ${b.depo||s.depo||'—'}</div></div><button class="barkod-del" onclick="deleteSayimBarkod('${s.id}',${i})">🗑</button></div>`;
+    const renk=b.depodaVar===false?'var(--danger)':'var(--accent)';
+    const etiket=b.depodaVar===false?'🚫 Depoda Yok':'✓';
+    return `<div class="barkod-row" style="padding:7px 4px;background:${b.depodaVar===false?'rgba(248,113,113,.05)':''};">
+      <div style="flex:1;min-width:0;">
+        <div style="font-family:var(--mono);font-size:12px;color:${renk};">${b.barkodNo}</div>
+        <div style="font-size:10px;color:var(--muted);">📦 ${b.depo||s.depo||'—'} <span style="color:${renk};font-weight:600;">${etiket}</span></div>
+      </div>
+      <button class="barkod-del" onclick="deleteSayimBarkod('${s.id}',${i})">🗑</button>
+    </div>`;
   }).join('');
 }
 
@@ -888,37 +1096,155 @@ function kaydetVeKapat(){
   setTimeout(()=>stopKamera(),100);
 }
 
-// Sayım kamera
+// Sayım kamera - iPhone optimize
 let sayimOkunuyor=false;
+let nativeStream=null; // iPhone native stream
+let nativeScanInterval=null;
+
 function toggleKamera(){kameraAcik?stopKamera():startKamera();}
+
+function isIOS(){
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+}
+
 function startKamera(){
   const btn=document.getElementById('kameraBtn');
   const cont=document.getElementById('qr-reader-container');
   cont.innerHTML='';
-  const rd=document.createElement('div');rd.id='qr-'+Date.now();rd.style.cssText='position:relative;border-radius:8px;overflow:hidden;';
-  const fl=document.createElement('div');fl.id='scan-flash';fl.style.cssText='position:absolute;inset:0;background:white;opacity:0;pointer-events:none;z-index:10;border-radius:8px;transition:opacity .08s;';
-  rd.appendChild(fl);cont.appendChild(rd);
-  btn.textContent='⏹ Kapat';btn.style.cssText='background:rgba(248,113,113,.15);border:1px solid var(--danger);color:var(--danger);padding:4px 10px;font-size:11px;border-radius:6px;font-weight:600;cursor:pointer;';
+  btn.textContent='⏹ Kapat';
+  btn.style.cssText='background:rgba(248,113,113,.15);border:1px solid var(--danger);color:var(--danger);padding:4px 10px;font-size:11px;border-radius:6px;font-weight:600;cursor:pointer;';
   kameraAcik=true;sayimOkunuyor=false;
-  html5Qr=new Html5Qrcode(rd.id);
-  Html5Qrcode.getCameras().then(cams=>{
-    if(!cams||!cams.length){showToast('Kamera bulunamadı',true);stopKamera();return;}
-    const cam=cams.find(c=>/back|rear|environment/i.test(c.label))||cams[cams.length-1];
-    const w=Math.min(cont.offsetWidth-20,270);
-    html5Qr.start(cam.id,{fps:10,qrbox:{width:w,height:Math.round(w*.55)},aspectRatio:1.5},
-      decoded=>{
-        if(sayimOkunuyor)return;sayimOkunuyor=true;
-        const f=document.getElementById('scan-flash');if(f){f.style.opacity='1';setTimeout(()=>f.style.opacity='0',130);}
-        if(navigator.vibrate)navigator.vibrate([65,35,65]);
-        document.getElementById('barkodInput').value=decoded;
-        barkodEkle();setTimeout(()=>sayimOkunuyor=false,1500);
-      },()=>{}
-    ).catch(err=>{showToast(err.toString().includes('ermission')?'Kamera izni gerekli':'Kamera açılamadı',true);stopKamera();});
-  }).catch(()=>{showToast('Kamera erişilemedi',true);stopKamera();});
+
+  // iPhone için native BarcodeDetector veya video stream
+  if(isIOS() || (typeof BarcodeDetector !== 'undefined')){
+    startNativeKamera(cont, decoded=>{
+      if(sayimOkunuyor)return;sayimOkunuyor=true;
+      if(navigator.vibrate)navigator.vibrate([65,35,65]);
+      document.getElementById('barkodInput').value=decoded;
+      barkodEkle();setTimeout(()=>sayimOkunuyor=false,1500);
+    });
+  } else {
+    // Android - Html5Qrcode
+    const rd=document.createElement('div');rd.id='qr-'+Date.now();rd.style.cssText='position:relative;border-radius:8px;overflow:hidden;';
+    const fl=document.createElement('div');fl.id='scan-flash';fl.style.cssText='position:absolute;inset:0;background:white;opacity:0;pointer-events:none;z-index:10;border-radius:8px;transition:opacity .08s;';
+    rd.appendChild(fl);cont.appendChild(rd);
+    html5Qr=new Html5Qrcode(rd.id);
+    Html5Qrcode.getCameras().then(cams=>{
+      if(!cams||!cams.length){showToast('Kamera bulunamadı',true);stopKamera();return;}
+      const cam=cams.find(c=>/back|rear|environment/i.test(c.label))||cams[cams.length-1];
+      const w=Math.min(cont.offsetWidth-20,270);
+      html5Qr.start(cam.id,{fps:15,qrbox:{width:w,height:Math.round(w*.55)},aspectRatio:1.5},
+        decoded=>{
+          if(sayimOkunuyor)return;sayimOkunuyor=true;
+          const f=document.getElementById('scan-flash');if(f){f.style.opacity='1';setTimeout(()=>f.style.opacity='0',130);}
+          if(navigator.vibrate)navigator.vibrate([65,35,65]);
+          document.getElementById('barkodInput').value=decoded;
+          barkodEkle();setTimeout(()=>sayimOkunuyor=false,1500);
+        },()=>{}
+      ).catch(err=>{showToast(err.toString().includes('ermission')?'Kamera izni gerekli':'Kamera açılamadı',true);stopKamera();});
+    }).catch(()=>{showToast('Kamera erişilemedi',true);stopKamera();});
+  }
 }
+
+function startNativeKamera(cont, onDecoded){
+  // Video elementi oluştur
+  const wrapper=document.createElement('div');
+  wrapper.style.cssText='position:relative;border-radius:8px;overflow:hidden;background:#000;';
+  const video=document.createElement('video');
+  video.style.cssText='width:100%;max-height:280px;display:block;object-fit:cover;';
+  video.setAttribute('autoplay','');
+  video.setAttribute('muted','');
+  video.setAttribute('playsinline',''); // iPhone için zorunlu
+  video.setAttribute('webkit-playsinline',''); // Eski iOS için
+  // Flash overlay
+  const fl=document.createElement('div');
+  fl.id='scan-flash';
+  fl.style.cssText='position:absolute;inset:0;background:white;opacity:0;pointer-events:none;z-index:10;border-radius:8px;transition:opacity .1s;';
+  // Hedef kutusu
+  const target=document.createElement('div');
+  target.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:65%;height:38%;border:2px solid rgba(74,222,128,.7);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.35);pointer-events:none;';
+  // Köşe çizgileri
+  target.innerHTML=`
+    <div style="position:absolute;top:-2px;left:-2px;width:18px;height:18px;border-top:3px solid var(--accent);border-left:3px solid var(--accent);border-radius:2px 0 0 0;"></div>
+    <div style="position:absolute;top:-2px;right:-2px;width:18px;height:18px;border-top:3px solid var(--accent);border-right:3px solid var(--accent);border-radius:0 2px 0 0;"></div>
+    <div style="position:absolute;bottom:-2px;left:-2px;width:18px;height:18px;border-bottom:3px solid var(--accent);border-left:3px solid var(--accent);border-radius:0 0 0 2px;"></div>
+    <div style="position:absolute;bottom:-2px;right:-2px;width:18px;height:18px;border-bottom:3px solid var(--accent);border-right:3px solid var(--accent);border-radius:0 0 2px 0;"></div>`;
+
+  wrapper.appendChild(video);wrapper.appendChild(fl);wrapper.appendChild(target);
+  cont.appendChild(wrapper);
+
+  // iPhone için yüksek çözünürlük kamera ayarları
+  const constraints={
+    video:{
+      facingMode:{ideal:'environment'},
+      width:{ideal:1920, min:1280},
+      height:{ideal:1080, min:720},
+      frameRate:{ideal:30, min:15},
+      focusMode: 'continuous', // iPhone otofokus
+    }
+  };
+
+  navigator.mediaDevices.getUserMedia(constraints)
+    .then(stream=>{
+      nativeStream=stream;
+      video.srcObject=stream;
+      video.play();
+
+      // BarcodeDetector varsa kullan (Chrome Android, bazı iPhone)
+      if(typeof BarcodeDetector !== 'undefined'){
+        const detector=new BarcodeDetector({formats:['ean_13','ean_8','code_128','code_39','qr_code','upc_a','upc_e','itf','codabar']});
+        nativeScanInterval=setInterval(async()=>{
+          if(video.readyState<2)return;
+          try{
+            const barcodes=await detector.detect(video);
+            if(barcodes.length>0){
+              fl.style.opacity='1';setTimeout(()=>fl.style.opacity='0',120);
+              onDecoded(barcodes[0].rawValue);
+            }
+          }catch(e){}
+        },120); // 120ms aralık = ~8fps tarama
+      } else {
+        // BarcodeDetector yoksa Html5Qrcode'u video stream ile kullan
+        const canvas=document.createElement('canvas');
+        const ctx=canvas.getContext('2d');
+        const tempDiv=document.createElement('div');
+        tempDiv.id='qr-native-'+Date.now();
+        tempDiv.style.display='none';
+        document.body.appendChild(tempDiv);
+        html5Qr=new Html5Qrcode(tempDiv.id);
+
+        nativeScanInterval=setInterval(()=>{
+          if(video.readyState<2)return;
+          canvas.width=video.videoWidth;
+          canvas.height=video.videoHeight;
+          ctx.drawImage(video,0,0);
+          canvas.toBlob(blob=>{
+            if(!blob)return;
+            const file=new File([blob],'frame.jpg',{type:'image/jpeg'});
+            html5Qr.scanFile(file,false)
+              .then(decoded=>{
+                fl.style.opacity='1';setTimeout(()=>fl.style.opacity='0',120);
+                onDecoded(decoded);
+              }).catch(()=>{});
+          },'image/jpeg',0.9);
+        },200); // 200ms = 5fps tarama
+      }
+    })
+    .catch(err=>{
+      showToast(err.toString().includes('ermission')?'Kamera izni gerekli — Ayarlar → Safari → Kamera':'Kamera açılamadı',true);
+      stopKamera();
+    });
+}
+
 function stopKamera(){
-  if(html5Qr&&kameraAcik)html5Qr.stop().catch(()=>{}).finally(()=>html5Qr=null);
+  // Native stream durdur
+  if(nativeScanInterval){clearInterval(nativeScanInterval);nativeScanInterval=null;}
+  if(nativeStream){nativeStream.getTracks().forEach(t=>t.stop());nativeStream=null;}
+  // Html5Qrcode durdur
+  if(html5Qr&&kameraAcik){html5Qr.stop().catch(()=>{}).finally(()=>html5Qr=null);}
   else html5Qr=null;
+  // Gizli div temizle
+  document.querySelectorAll('[id^="qr-native-"]').forEach(el=>el.remove());
   kameraAcik=false;sayimOkunuyor=false;
   const btn=document.getElementById('kameraBtn');
   if(btn){btn.textContent='📷 Aç';btn.style.cssText='';}
@@ -1033,14 +1359,39 @@ function transferBarkodEkle(){
   const inp=document.getElementById('transferBarkodInput');
   const bNo=inp.value.trim();if(!bNo)return;
   const t=transferler.find(x=>x.id===aktifTransferId);if(!t)return;
+  const u=document.getElementById('transferCiftUyari');
+  // Çift okuma kontrolü
   if(t.barkodlar.some(b=>b.barkodNo.toString().trim()===bNo.toString().trim())){
-    const u=document.getElementById('transferCiftUyari');
     u.style.display='block';u.textContent=`⚠️ "${bNo}" BU TRANSFERDE ZATEN VAR — Eklenmedi!`;
+    u.style.color='var(--warn)';
     inp.value='';inp.focus();
     if(navigator.vibrate)navigator.vibrate([200,100,200]);
-    setTimeout(()=>u.style.display='none',3500);return;
+    setTimeout(()=>{u.style.display='none';u.style.color='';},3500);return;
   }
-  document.getElementById('transferCiftUyari').style.display='none';
+  // Harf kontrolü
+  const ilkHarf=bNo.charAt(0).toUpperCase();
+  if(!GECERLI_BASLAR.includes(ilkHarf)){
+    u.style.display='block';u.textContent=`❌ YANLIŞ BARKOD — "${bNo}" geçersiz (D,K,X,V,Q,T ile başlamalı)`;
+    u.style.color='var(--danger)';
+    inp.value='';inp.focus();
+    if(navigator.vibrate)navigator.vibrate([300,100,300]);
+    setTimeout(()=>{u.style.display='none';u.style.color='';},4000);return;
+  }
+  // Çıkış deposunda var mı kontrolü
+  if(stokData.length>0){
+    const cikisDepoStok=stokData.find(s=>
+      s.barkodNo.toString().trim()===bNo.toString().trim() &&
+      s.depoAdi.toString().trim()===t.cikisDepo.toString().trim()
+    );
+    if(!cikisDepoStok){
+      u.style.display='block';u.textContent=`🚫 BARKOD DEPODA YOK — "${bNo}" çıkış deposunda (${t.cikisDepo}) bulunamadı — Eklenmedi!`;
+      u.style.color='var(--danger)';
+      inp.value='';inp.focus();
+      if(navigator.vibrate)navigator.vibrate([300,100,300,100,300]);
+      setTimeout(()=>{u.style.display='none';u.style.color='';},5000);return;
+    }
+  }
+  u.style.display='none';u.style.color='';
   t.barkodlar.push({barkodNo:bNo,cikisDepo:t.cikisDepo,girisDepo:t.girisDepo});
   inp.value='';inp.focus();
   saveLocalTransfer();renderTransferBarkodList();
@@ -1071,33 +1422,49 @@ function transferKaydetVeKapat(){
 
 // Transfer kamera
 let trOkunuyor=false;
+let trNativeStream=null, trNativeScanInterval=null;
 function toggleTransferKamera(){transferKameraAcik?stopTransferKamera():startTransferKamera();}
 function startTransferKamera(){
   const btn=document.getElementById('transferKameraBtn');
   const cont=document.getElementById('qr-transfer-container');
   cont.innerHTML='';
-  const rd=document.createElement('div');rd.id='qt-'+Date.now();rd.style.cssText='position:relative;border-radius:8px;overflow:hidden;';
-  const fl=document.createElement('div');fl.id='tf-flash';fl.style.cssText='position:absolute;inset:0;background:white;opacity:0;pointer-events:none;z-index:10;border-radius:8px;transition:opacity .08s;';
-  rd.appendChild(fl);cont.appendChild(rd);
-  btn.textContent='⏹ Kapat';btn.style.cssText='background:rgba(248,113,113,.15);border:1px solid var(--danger);color:var(--danger);padding:4px 10px;font-size:11px;border-radius:6px;font-weight:600;cursor:pointer;';
+  btn.textContent='⏹ Kapat';
+  btn.style.cssText='background:rgba(248,113,113,.15);border:1px solid var(--danger);color:var(--danger);padding:4px 10px;font-size:11px;border-radius:6px;font-weight:600;cursor:pointer;';
   transferKameraAcik=true;trOkunuyor=false;
-  transferQr=new Html5Qrcode(rd.id);
-  Html5Qrcode.getCameras().then(cams=>{
-    if(!cams||!cams.length){showToast('Kamera bulunamadı',true);stopTransferKamera();return;}
-    const cam=cams.find(c=>/back|rear|environment/i.test(c.label))||cams[cams.length-1];
-    const w=Math.min(cont.offsetWidth-20,270);
-    transferQr.start(cam.id,{fps:10,qrbox:{width:w,height:Math.round(w*.55)},aspectRatio:1.5},
-      decoded=>{
-        if(trOkunuyor)return;trOkunuyor=true;
-        const f=document.getElementById('tf-flash');if(f){f.style.opacity='1';setTimeout(()=>f.style.opacity='0',130);}
-        if(navigator.vibrate)navigator.vibrate([65,35,65]);
-        document.getElementById('transferBarkodInput').value=decoded;
-        transferBarkodEkle();setTimeout(()=>trOkunuyor=false,1500);
-      },()=>{}
-    ).catch(err=>{showToast(err.toString().includes('ermission')?'Kamera izni gerekli':'Kamera açılamadı',true);stopTransferKamera();});
-  }).catch(()=>{showToast('Kamera erişilemedi',true);stopTransferKamera();});
+
+  if(isIOS() || typeof BarcodeDetector !== 'undefined'){
+    startNativeKamera(cont, decoded=>{
+      if(trOkunuyor)return;trOkunuyor=true;
+      if(navigator.vibrate)navigator.vibrate([65,35,65]);
+      document.getElementById('transferBarkodInput').value=decoded;
+      transferBarkodEkle();setTimeout(()=>trOkunuyor=false,1500);
+    });
+    // Transfer için stream referansını sakla
+    setTimeout(()=>{trNativeStream=nativeStream;trNativeScanInterval=nativeScanInterval;},500);
+  } else {
+    const rd=document.createElement('div');rd.id='qt-'+Date.now();rd.style.cssText='position:relative;border-radius:8px;overflow:hidden;';
+    const fl=document.createElement('div');fl.id='tf-flash';fl.style.cssText='position:absolute;inset:0;background:white;opacity:0;pointer-events:none;z-index:10;border-radius:8px;transition:opacity .08s;';
+    rd.appendChild(fl);cont.appendChild(rd);
+    transferQr=new Html5Qrcode(rd.id);
+    Html5Qrcode.getCameras().then(cams=>{
+      if(!cams||!cams.length){showToast('Kamera bulunamadı',true);stopTransferKamera();return;}
+      const cam=cams.find(c=>/back|rear|environment/i.test(c.label))||cams[cams.length-1];
+      const w=Math.min(cont.offsetWidth-20,270);
+      transferQr.start(cam.id,{fps:15,qrbox:{width:w,height:Math.round(w*.55)},aspectRatio:1.5},
+        decoded=>{
+          if(trOkunuyor)return;trOkunuyor=true;
+          const f=document.getElementById('tf-flash');if(f){f.style.opacity='1';setTimeout(()=>f.style.opacity='0',130);}
+          if(navigator.vibrate)navigator.vibrate([65,35,65]);
+          document.getElementById('transferBarkodInput').value=decoded;
+          transferBarkodEkle();setTimeout(()=>trOkunuyor=false,1500);
+        },()=>{}
+      ).catch(err=>{showToast(err.toString().includes('ermission')?'Kamera izni gerekli':'Kamera açılamadı',true);stopTransferKamera();});
+    }).catch(()=>{showToast('Kamera erişilemedi',true);stopTransferKamera();});
+  }
 }
 function stopTransferKamera(){
+  if(trNativeScanInterval){clearInterval(trNativeScanInterval);trNativeScanInterval=null;}
+  if(trNativeStream){trNativeStream.getTracks().forEach(t=>t.stop());trNativeStream=null;}
   if(transferQr&&transferKameraAcik)transferQr.stop().catch(()=>{}).finally(()=>transferQr=null);
   else transferQr=null;
   transferKameraAcik=false;trOkunuyor=false;
@@ -1120,8 +1487,19 @@ function doExport(){
   const k=getAktifKayit();if(!k||!k.barkodlar.length){showToast('Veri yok',true);return;}
   let data;
   if(aktifPaylasType==='sayim'){
-    data=[['Sıra','Barkod No','Depo','Sayım Adı','Tarih']];
-    k.barkodlar.forEach((b,i)=>data.push([i+1,b.barkodNo,b.depo||k.depo||'',k.ad,k.tarih]));
+    // Eksik olanları da ekle
+    const depoBarkodlar=stokData.filter(b=>b.depoAdi.toString().trim()===(k.depo||'').toString().trim());
+    const sayilanIdler=k.barkodlar.map(b=>b.barkodNo.toString().trim());
+    data=[['Sıra','Barkod No','Depo','Durum','Sayım Adı','Tarih']];
+    k.barkodlar.forEach((b,i)=>{
+      const durum=b.depodaVar===false?'Depoda Yok':'Okundu';
+      data.push([i+1,b.barkodNo,b.depo||k.depo||'',durum,k.ad,k.tarih]);
+    });
+    // Eksik olanlar
+    const eksikler=depoBarkodlar.filter(b=>!sayilanIdler.includes(b.barkodNo.toString().trim()));
+    eksikler.forEach((b,i)=>{
+      data.push([k.barkodlar.length+i+1,b.barkodNo,b.depoAdi||k.depo||'','Eksik',k.ad,k.tarih]);
+    });
   }else{
     data=[['Sıra','Barkod No','Çıkış Depo','Giriş Depo','Transfer Adı','Tarih']];
     k.barkodlar.forEach((b,i)=>data.push([i+1,b.barkodNo,b.cikisDepo||'',b.girisDepo||'',k.ad,k.tarih]));
@@ -1129,7 +1507,7 @@ function doExport(){
   const ws=XLSX.utils.aoa_to_sheet(data);
   const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,'Veri');
   XLSX.writeFile(wb,`${k.ad.replace(/\s+/g,'_')}.xlsx`);
-  showToast(`${k.barkodlar.length} kayıt indirildi ✓`);
+  showToast(`${data.length-1} kayıt indirildi ✓`);
 }
 
 function doWhatsapp(){
@@ -1304,6 +1682,8 @@ renderStok();
 renderDepoList();
 renderSayimList();
 renderTransferList();
+// History başlangıç
+history.replaceState({page:'home'},'',window.location.pathname);
 </script>
 </body>
 </html>
