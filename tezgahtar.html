@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Tezgahtar Paneli — Barkod Sayım</title>
+<script src="https://unpkg.com/@zxing/library@0.19.1/umd/index.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap');
+:root{
+  --bg:#0f1117;--surface:#1a1d27;--surface2:#232636;--border:#2e3248;
+  --accent:#4ade80;--accent2:#22d3ee;--warn:#f59e0b;--danger:#f87171;
+  --text:#e2e8f0;--muted:#64748b;
+  --mono:'IBM Plex Mono',monospace;--sans:'IBM Plex Sans',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:var(--sans);background:var(--bg);color:var(--text);min-height:100vh;max-width:480px;margin:0 auto;}
+
+/* HEADER */
+.app-header{background:var(--surface);border-bottom:1px solid var(--border);padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:100;}
+.app-logo{width:28px;height:28px;background:var(--accent2);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:14px;}
+.app-title{font-size:14px;font-weight:700;}
+.app-role{font-size:10px;color:var(--accent2);}
+.header-right{margin-left:auto;}
+.conn-dot{width:8px;height:8px;border-radius:50%;background:var(--danger);}
+.conn-dot.on{background:var(--accent);box-shadow:0 0 5px var(--accent);}
+
+/* CARD */
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:13px;margin-bottom:10px;}
+.card-title{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px;}
+
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:9px 13px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;font-family:var(--sans);}
+.btn-primary{background:var(--accent);color:#0f1117;}
+.btn-secondary{background:var(--surface2);color:var(--text);border:1px solid var(--border);}
+.btn-blue{background:rgba(34,211,238,.12);color:var(--accent2);border:1px solid rgba(34,211,238,.3);}
+.btn-sm{padding:5px 9px;font-size:11px;border-radius:6px;}
+.btn-full{width:100%;justify-content:center;}
+
+/* INPUT */
+.input{width:100%;background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:9px 11px;color:var(--text);font-size:14px;font-family:var(--sans);transition:border-color .2s;}
+.input:focus{outline:none;border-color:var(--accent);}
+.input::placeholder{color:var(--muted);}
+
+/* STOK TABLE */
+.stok-table{width:100%;border-collapse:collapse;}
+.stok-table th{font-size:9px;color:var(--muted);text-transform:uppercase;padding:6px 8px;background:var(--surface2);text-align:left;font-weight:700;}
+.stok-table td{font-size:11px;padding:7px 8px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.stok-table tr:last-child td{border-bottom:none;}
+.stok-table tr:nth-child(even) td{background:rgba(255,255,255,.02);}
+.td-barkod{font-family:var(--mono);color:var(--accent2);font-size:10px;}
+.td-depo{color:var(--accent);font-size:10px;}
+
+/* QR WRAP */
+#qr-sorgu-container{width:100%;border-radius:8px;overflow:hidden;}
+.qr-wrap video{width:100%!important;height:auto!important;min-height:220px;max-height:290px;object-fit:cover;display:block;}
+
+/* TOAST */
+.toast{position:fixed;bottom:18px;left:50%;transform:translateX(-50%);background:var(--accent);color:#0f1117;padding:8px 16px;border-radius:100px;font-size:12px;font-weight:600;z-index:9999;animation:fadeOut 2.6s ease forwards;white-space:nowrap;max-width:88vw;text-align:center;}
+.toast.error{background:var(--danger);color:white;}
+@keyframes fadeOut{0%{opacity:0;transform:translateX(-50%) translateY(6px)}12%{opacity:1;transform:translateX(-50%) translateY(0)}75%{opacity:1}100%{opacity:0}}
+
+/* INFO BANNER */
+.info-banner{background:rgba(34,211,238,.08);border:1px solid rgba(34,211,238,.25);border-radius:10px;padding:10px 12px;margin-bottom:12px;font-size:12px;color:var(--accent2);line-height:1.5;}
+</style>
+</head>
+<body>
+
+<!-- HEADER -->
+<div class="app-header">
+  <div class="app-logo">🏪</div>
+  <div>
+    <div class="app-title">Barkod Sayım</div>
+    <div class="app-role">🏪 Tezgahtar Paneli</div>
+  </div>
+  <div class="header-right">
+    <div class="conn-dot" id="connDot"></div>
+  </div>
+</div>
+
+<!-- SORGU SAYFASI (tek ekran) -->
+<div style="padding:13px;">
+  <div class="info-banner">🏪 Tezgahtar ekranı — Barkod veya model adı ile stok sorgulayabilirsiniz.</div>
+
+  <div id="stokDurumBanner" style="display:none;margin-bottom:12px;padding:9px 12px;border-radius:8px;font-size:12px;font-weight:600;"></div>
+
+  <div class="card">
+    <!-- Barkod ile sorgu -->
+    <div style="font-size:10px;color:var(--muted);margin-bottom:5px;font-weight:600;">📷 Barkod ile Sorgula</div>
+    <div style="display:flex;gap:7px;margin-bottom:8px;">
+      <input class="input" id="sorguInput" placeholder="Barkod girin..." type="text" inputmode="text" autocomplete="off" onkeydown="if(event.key==='Enter')sorguYap()" style="flex:1;font-family:var(--mono);">
+      <button class="btn btn-primary" onclick="sorguYap()">Sorgula</button>
+    </div>
+    <button class="btn btn-secondary btn-full btn-sm" id="sorguKameraBtn" onclick="toggleSorguKamera()" style="margin-bottom:10px;">📷 Kamera ile Oku</button>
+    <div id="qr-sorgu-container" class="qr-wrap"></div>
+
+    <!-- Model adı ile sorgu -->
+    <div style="border-top:1px solid var(--border);padding-top:10px;margin-top:4px;">
+      <div style="font-size:10px;color:var(--muted);margin-bottom:5px;font-weight:600;">🔤 Model Adı ile Sorgula</div>
+      <div style="display:flex;gap:7px;">
+        <input class="input" id="modelSorguInput" placeholder="Model adı girin..." type="text" autocomplete="off"
+          oninput="modelSorguCanli(this.value)"
+          onkeydown="if(event.key==='Enter')modelSorguYap()" style="flex:1;">
+        <button class="btn btn-blue" onclick="modelSorguYap()">Ara</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sonuçlar -->
+  <div id="sorguSonuc" style="display:none;">
+    <div class="card" style="padding:0;overflow:hidden;">
+      <div style="padding:9px 12px;background:var(--surface2);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;">
+        <span class="card-title" style="margin:0;" id="sorguBaslik">Sonuçlar</span>
+        <span id="sorguAdet" style="font-size:11px;color:var(--accent);font-family:var(--mono);font-weight:600;"></span>
+      </div>
+      <div style="overflow-x:auto;">
+        <table class="stok-table">
+          <thead><tr><th>Barkod</th><th>Model</th><th>Renk</th><th>Beden</th><th>Depo</th><th>Alttip</th></tr></thead>
+          <tbody id="sorguTbody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+  <div id="sorguBos" style="display:none;color:var(--muted);font-size:12px;text-align:center;padding:28px;">Stok kaydı bulunamadı</div>
+
+  <!-- Renk Seçim Modalı -->
+  <div id="renkModalOverlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:300;align-items:flex-end;">
+    <div style="background:var(--surface);border-radius:18px 18px 0 0;padding:16px 14px 28px;width:100%;max-width:480px;margin:0 auto;border-top:1px solid var(--border);">
+      <div style="font-size:14px;font-weight:700;margin-bottom:6px;">🎨 Renk Seç</div>
+      <div style="font-size:11px;color:var(--muted);margin-bottom:12px;" id="renkModalBarkod"></div>
+      <div id="renkSecenekler" style="display:flex;flex-wrap:wrap;gap:8px;"></div>
+      <button class="btn btn-secondary btn-full" style="margin-top:14px;" onclick="renkModalKapat()">Kapat</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ===== STATE =====
+let stokData = [];
+let sorguSonuclar = [], aktifRenkFiltre = null, sorguAktifBno = '';
+
+// ===== DATA LOAD =====
+function loadLocal(){
+  try{ stokData = JSON.parse(localStorage.getItem('bs_stok')||'[]'); }catch(e){ stokData=[]; }
+}
+
+function guncelleDurumBanner(){
+  const el = document.getElementById('stokDurumBanner');
+  if(stokData.length){
+    el.style.display='block';
+    el.style.background='rgba(74,222,128,.08)';
+    el.style.borderColor='rgba(74,222,128,.3)';
+    el.style.color='var(--accent)';
+    el.textContent=`✓ ${stokData.length} stok kaydı yüklü`;
+  } else {
+    el.style.display='block';
+    el.style.background='rgba(248,113,113,.08)';
+    el.style.borderColor='rgba(248,113,113,.3)';
+    el.style.color='var(--danger)';
+    el.textContent='⚠️ Stok verisi bulunamadı — Admin panelinden yükleyin';
+  }
+}
+
+// ===== SORGU =====
+function sorguYap(){
+  const bNo=document.getElementById('sorguInput').value.trim();
+  if(!bNo){showToast('Barkod girin',true);return;}
+  if(!stokData.length){showToast('Stok verisi yok — Admin panelinden yükleyin',true);return;}
+  const hedef=stokData.find(s=>s.barkodNo.toString().trim()===bNo.toString().trim());
+  if(!hedef){
+    document.getElementById('sorguSonuc').style.display='none';
+    document.getElementById('sorguBos').style.display='block';
+    return;
+  }
+  sorguSonuclar=stokData.filter(s=>s.model.toString().trim()===hedef.model.toString().trim());
+  aktifRenkFiltre=null; sorguAktifBno=bNo;
+  document.getElementById('sorguBos').style.display='none';
+  document.getElementById('sorguSonuc').style.display='block';
+  renderSorguSonuc(bNo);
+}
+
+function renderSorguSonuc(hedefBno){
+  const liste=aktifRenkFiltre?sorguSonuclar.filter(s=>s.renk===aktifRenkFiltre):sorguSonuclar;
+  document.getElementById('sorguBaslik').textContent=sorguSonuclar[0]?.model||'Sonuçlar';
+  document.getElementById('sorguAdet').textContent=liste.length+' kayıt';
+  document.getElementById('sorguTbody').innerHTML=liste.map(s=>`
+    <tr style="${s.barkodNo.toString().trim()===hedefBno?'background:rgba(74,222,128,.07);':''}">
+      <td class="td-barkod">${s.barkodNo}</td>
+      <td>${s.model||'—'}</td>
+      <td><button onclick="renkSec('${s.barkodNo}','${s.model}')" style="background:rgba(34,211,238,.1);border:1px solid rgba(34,211,238,.3);color:var(--accent2);padding:3px 8px;border-radius:5px;font-size:11px;cursor:pointer;">${s.renk||'—'}</button></td>
+      <td>${s.beden||'—'}</td>
+      <td class="td-depo">${s.depoAdi||'—'}</td>
+      <td>${s.alttip||'—'}</td>
+    </tr>`).join('');
+}
+
+function modelSorguYap(){
+  const q=document.getElementById('modelSorguInput').value.trim().toLowerCase();
+  if(!q){showToast('Model adı girin',true);return;}
+  if(!stokData.length){showToast('Stok verisi yok',true);return;}
+  const liste=stokData.filter(s=>s.model.toString().toLowerCase().includes(q));
+  if(!liste.length){document.getElementById('sorguSonuc').style.display='none';document.getElementById('sorguBos').style.display='block';return;}
+  sorguSonuclar=liste; aktifRenkFiltre=null; sorguAktifBno='';
+  document.getElementById('sorguBos').style.display='none';
+  document.getElementById('sorguSonuc').style.display='block';
+  document.getElementById('sorguBaslik').textContent=`"${q}" araması`;
+  document.getElementById('sorguAdet').textContent=liste.length+' kayıt';
+  document.getElementById('sorguTbody').innerHTML=liste.map(s=>`
+    <tr><td class="td-barkod">${s.barkodNo}</td><td>${s.model||'—'}</td>
+    <td>${s.renk||'—'}</td><td>${s.beden||'—'}</td>
+    <td class="td-depo">${s.depoAdi||'—'}</td><td>${s.alttip||'—'}</td></tr>`).join('');
+}
+
+function modelSorguCanli(q){if(q.length>=2)modelSorguYap();}
+
+function renkSec(barkodNo, model){
+  const renkler=[...new Set(sorguSonuclar.filter(s=>s.model===model).map(s=>s.renk).filter(Boolean))];
+  document.getElementById('renkModalBarkod').textContent=`Model: ${model}`;
+  document.getElementById('renkSecenekler').innerHTML=renkler.map(r=>`
+    <button onclick="renkFiltrele('${r}')" style="background:${aktifRenkFiltre===r?'rgba(34,211,238,.3)':'rgba(34,211,238,.1)'};border:1px solid rgba(34,211,238,.4);color:var(--accent2);padding:6px 14px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;">${r}</button>`).join('');
+  document.getElementById('renkModalOverlay').style.display='flex';
+}
+function renkFiltrele(r){
+  aktifRenkFiltre=aktifRenkFiltre===r?null:r;
+  renderSorguSonuc(sorguAktifBno);
+  document.getElementById('renkModalOverlay').style.display='none';
+}
+function renkModalKapat(){ document.getElementById('renkModalOverlay').style.display='none'; }
+
+// ===== KAMERA =====
+let nativeStream=null, nativeScanInterval=null;
+function isIOS(){return /iPad|iPhone|iPod/.test(navigator.userAgent)&&!window.MSStream;}
+
+function startNativeKamera(cont,onDecoded){
+  const wrapper=document.createElement('div');wrapper.style.cssText='position:relative;border-radius:8px;overflow:hidden;background:#000;';
+  const video=document.createElement('video');video.style.cssText='width:100%;max-height:280px;display:block;object-fit:cover;border-radius:8px;';
+  video.setAttribute('autoplay','');video.setAttribute('muted','');video.setAttribute('playsinline','');video.setAttribute('webkit-playsinline','');
+  const fl=document.createElement('div');fl.style.cssText='position:absolute;inset:0;background:white;opacity:0;pointer-events:none;z-index:10;transition:opacity .08s;';
+  const target=document.createElement('div');target.style.cssText='position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:65%;height:38%;border:2px solid rgba(74,222,128,.8);border-radius:8px;box-shadow:0 0 0 9999px rgba(0,0,0,.4);pointer-events:none;';
+  target.innerHTML='<div style="position:absolute;top:-2px;left:-2px;width:20px;height:20px;border-top:3px solid var(--accent);border-left:3px solid var(--accent);"></div><div style="position:absolute;top:-2px;right:-2px;width:20px;height:20px;border-top:3px solid var(--accent);border-right:3px solid var(--accent);"></div><div style="position:absolute;bottom:-2px;left:-2px;width:20px;height:20px;border-bottom:3px solid var(--accent);border-left:3px solid var(--accent);"></div><div style="position:absolute;bottom:-2px;right:-2px;width:20px;height:20px;border-bottom:3px solid var(--accent);border-right:3px solid var(--accent);"></div>';
+  wrapper.appendChild(video);wrapper.appendChild(fl);wrapper.appendChild(target);cont.appendChild(wrapper);
+  const flashVe=(cb)=>{fl.style.opacity='1';setTimeout(()=>fl.style.opacity='0',130);cb();};
+  if(isIOS()){
+    navigator.mediaDevices.getUserMedia({video:{facingMode:{exact:'environment'},width:{ideal:1280},height:{ideal:720}}})
+      .catch(()=>navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}}}))
+      .then(stream=>{nativeStream=stream;video.srcObject=stream;video.play();video.addEventListener('playing',()=>{iosZXingScan(video,fl,onDecoded,flashVe);},{once:true});setTimeout(()=>{if(video.readyState>=2&&!nativeScanInterval)iosZXingScan(video,fl,onDecoded,flashVe);},2000);})
+      .catch(()=>showToast('Kamera izni gerekli',true));
+  }else{
+    navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280,min:640},height:{ideal:720,min:480},frameRate:{ideal:30}}})
+      .then(stream=>{nativeStream=stream;video.srcObject=stream;video.play();let okuma=false;
+        if(typeof BarcodeDetector!=='undefined'){try{const det=new BarcodeDetector({formats:['ean_13','ean_8','code_128','code_39','qr_code','upc_a','upc_e','itf','codabar']});nativeScanInterval=setInterval(async()=>{if(video.readyState<2||okuma)return;try{const b=await det.detect(video);if(b.length>0){okuma=true;flashVe(()=>onDecoded(b[0].rawValue));setTimeout(()=>okuma=false,1500);}}catch(e){}},80);return;}catch(e){}}
+        androidZXing(video,fl,onDecoded,flashVe);})
+      .catch(()=>showToast('Kamera izni gerekli',true));
+  }
+}
+
+function iosZXingScan(video,fl,onDecoded,flashVe){
+  if(typeof ZXing==='undefined'){showToast('Sayfa yenileyin',true);return;}
+  try{
+    const hints=new Map();hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.EAN_13,ZXing.BarcodeFormat.EAN_8,ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.CODE_39,ZXing.BarcodeFormat.QR_CODE]);hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+    const reader=new ZXing.MultiFormatReader();reader.setHints(hints);
+    const canvas=document.createElement('canvas');const ctx=canvas.getContext('2d');let debounce=false;
+    nativeScanInterval=setInterval(()=>{if(video.readyState<2||debounce)return;canvas.width=video.videoWidth;canvas.height=video.videoHeight;if(canvas.width===0)return;ctx.drawImage(video,0,0);try{const imgData=ctx.getImageData(0,0,canvas.width,canvas.height);const lum=new ZXing.RGBLuminanceSource(imgData.data,canvas.width,canvas.height);const bmp=new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum));const res=reader.decode(bmp);if(res){debounce=true;flashVe(()=>onDecoded(res.getText()));setTimeout(()=>debounce=false,1500);}}catch(e){}},120);
+  }catch(e){}
+}
+
+function androidZXing(video,fl,onDecoded,flashVe){
+  if(typeof ZXing==='undefined')return;
+  try{
+    const hints=new Map();hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.EAN_13,ZXing.BarcodeFormat.EAN_8,ZXing.BarcodeFormat.CODE_128,ZXing.BarcodeFormat.CODE_39,ZXing.BarcodeFormat.QR_CODE]);hints.set(ZXing.DecodeHintType.TRY_HARDER,true);
+    const reader=new ZXing.MultiFormatReader();reader.setHints(hints);
+    const canvas=document.createElement('canvas');const ctx=canvas.getContext('2d');let debounce=false;
+    nativeScanInterval=setInterval(()=>{if(video.readyState<2||debounce)return;canvas.width=video.videoWidth;canvas.height=video.videoHeight;if(canvas.width===0)return;ctx.drawImage(video,0,0);try{const imgData=ctx.getImageData(0,0,canvas.width,canvas.height);const lum=new ZXing.RGBLuminanceSource(imgData.data,canvas.width,canvas.height);const bmp=new ZXing.BinaryBitmap(new ZXing.HybridBinarizer(lum));const res=reader.decode(bmp);if(res){debounce=true;flashVe(()=>onDecoded(res.getText()));setTimeout(()=>debounce=false,1500);}}catch(e){}},100);
+  }catch(e){}
+}
+
+// SORGU KAMERA
+let sorguKameraAcik=false,sorguNativeStream=null,sorguScanInterval=null,sorguDebounce=false;
+function toggleSorguKamera(){sorguKameraAcik?stopSorguKamera():startSorguKamera();}
+function startSorguKamera(){
+  const btn=document.getElementById('sorguKameraBtn');const cont=document.getElementById('qr-sorgu-container');cont.innerHTML='';
+  btn.textContent='⏹ Kapat';btn.style.cssText='background:rgba(248,113,113,.15);border:1px solid var(--danger);color:var(--danger);width:100%;padding:5px;font-size:11px;border-radius:6px;font-weight:600;cursor:pointer;font-family:var(--sans);margin-bottom:7px;';
+  sorguKameraAcik=true;sorguDebounce=false;
+  startNativeKamera(cont,decoded=>{if(sorguDebounce)return;sorguDebounce=true;if(navigator.vibrate)navigator.vibrate([60,30,60]);document.getElementById('sorguInput').value=decoded;sorguYap();stopSorguKamera();setTimeout(()=>sorguDebounce=false,1500);});
+  setTimeout(()=>{sorguNativeStream=nativeStream;sorguScanInterval=nativeScanInterval;},500);
+}
+function stopSorguKamera(){
+  if(sorguScanInterval){clearInterval(sorguScanInterval);sorguScanInterval=null;}
+  if(sorguNativeStream){sorguNativeStream.getTracks().forEach(t=>t.stop());sorguNativeStream=null;}
+  if(nativeScanInterval){clearInterval(nativeScanInterval);nativeScanInterval=null;}
+  if(nativeStream){nativeStream.getTracks().forEach(t=>t.stop());nativeStream=null;}
+  sorguKameraAcik=false;
+  const btn=document.getElementById('sorguKameraBtn');if(btn){btn.textContent='📷 Kamera ile Oku';btn.style.cssText='';}
+  const c=document.getElementById('qr-sorgu-container');if(c)c.innerHTML='';
+}
+
+// ===== TOAST =====
+function showToast(msg,isErr=false){
+  document.querySelectorAll('.toast').forEach(t=>t.remove());
+  const t=document.createElement('div');t.className='toast'+(isErr?' error':'');
+  t.textContent=msg;document.body.appendChild(t);
+  setTimeout(()=>t.remove(),2800);
+}
+
+// ===== FIREBASE SYNC (okuma) =====
+function fbBaglanOtomatik(){
+  const cfg=localStorage.getItem('fb_cfg');if(!cfg)return;
+  try{
+    const c=JSON.parse(cfg);
+    const loadScript=(src,cb)=>{const s=document.createElement('script');s.src=src;s.onload=cb;document.head.appendChild(s);};
+    if(!window.firebase){
+      loadScript('https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js',()=>
+        loadScript('https://www.gstatic.com/firebasejs/9.23.0/firebase-firestore-compat.js',()=>fbInit(c)));
+    }else{fbInit(c);}
+  }catch(e){}
+}
+
+function fbInit(c){
+  try{
+    const cfg={apiKey:c.apiKey,authDomain:`${c.projectId}.firebaseapp.com`,projectId:c.projectId,storageBucket:`${c.projectId}.appspot.com`,appId:c.appId};
+    if(!firebase.apps.length)firebase.initializeApp(cfg);
+    const db=firebase.firestore();
+    document.getElementById('connDot').className='conn-dot on';
+    db.collection('veriler').doc('stok_meta').onSnapshot(meta=>{
+      if(!meta.exists)return;const toplamParca=meta.data().toplamParca||0;if(toplamParca===0)return;
+      const promises=[];for(let p=0;p<toplamParca;p++)promises.push(db.collection('veriler').doc('stok_'+p).get());
+      Promise.all(promises).then(docs=>{
+        stokData=[];docs.forEach(d=>{if(d.exists)stokData=stokData.concat(d.data().liste||[]);});
+        try{localStorage.setItem('bs_stok',JSON.stringify(stokData));}catch(e){}
+        guncelleDurumBanner();
+      });
+    });
+  }catch(e){}
+}
+
+// ===== INIT =====
+loadLocal();
+guncelleDurumBanner();
+fbBaglanOtomatik();
+</script>
+</body>
+</html>
